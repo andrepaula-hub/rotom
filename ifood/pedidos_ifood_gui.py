@@ -2039,7 +2039,7 @@ class App(Tk):
         # ── Top bar (dentro da aba Pedidos) ──
         top = ttk.Frame(self.tab_pedidos, padding=10, style="Top.TFrame")
         top.pack(fill=X)
-        ttk.Label(top, text="Rotom Labels", style="Brand.TLabel").pack(side=LEFT, padx=(0, 14))
+        ttk.Label(top, text="Rotom Labels • Shopper", style="Brand.TLabel").pack(side=LEFT, padx=(0, 14))
         ttk.Button(top, text="Atualizar",     command=self.reload, style="Primary.TButton").pack(side=LEFT, padx=(0, 6))
         ttk.Button(top, text="Configurações", command=self.open_settings).pack(side=LEFT, padx=(0, 6))
         self.auto_var = BooleanVar(value=True)
