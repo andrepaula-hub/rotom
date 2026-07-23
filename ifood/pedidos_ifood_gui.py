@@ -63,6 +63,9 @@ def _detect_app_version():
     return "local"
 
 APP_VERSION = _detect_app_version()
+
+def _is_legacy_semver(value):
+    return bool(re.match(r"^\d+(?:\.\d+)+$", str(value or "").strip()))
 UPDATE_PRESERVE = {
     "ifood/token.json",
     "ifood/client_secret.json",
@@ -2467,6 +2470,10 @@ class App(Tk):
                 if version and version == APP_VERSION:
                     self.after(0, lambda: messagebox.showinfo("Atualização", f"Você já está na versão {APP_VERSION}.", parent=self))
                     self.after(0, lambda: self.status_lbl.config(text=f"Versão {APP_VERSION} já instalada"))
+                    return
+                if version and _is_legacy_semver(version) and not _is_legacy_semver(APP_VERSION):
+                    self.after(0, lambda: messagebox.showinfo("Atualização", f"Manifest legado {version}; versão local {APP_VERSION} mantida.", parent=self))
+                    self.after(0, lambda: self.status_lbl.config(text=f"Versão {APP_VERSION} mantida"))
                     return
 
                 staging_dir = tempfile.mkdtemp(prefix="rebootqr_update_")
