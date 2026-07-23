@@ -2019,6 +2019,7 @@ class App(Tk):
         # ── Top bar (dentro da aba Pedidos) ──
         top = ttk.Frame(self.tab_pedidos, padding=10, style="Top.TFrame")
         top.pack(fill=X)
+        ttk.Label(top, text="Rotom", style="Brand.TLabel").pack(side=LEFT, padx=(0, 14))
         ttk.Button(top, text="Atualizar",     command=self.reload, style="Primary.TButton").pack(side=LEFT, padx=(0, 6))
         ttk.Button(top, text="Configurações", command=self.open_settings).pack(side=LEFT, padx=(0, 6))
         self.auto_var = BooleanVar(value=True)
@@ -2140,6 +2141,7 @@ class App(Tk):
         self.style.configure("TLabel", background=UI_BG, foreground=UI_TEXT)
         self.style.configure("Top.TFrame", background=UI_NAVY, relief="flat")
         self.style.configure("Top.TLabel", background=UI_NAVY, foreground="#ffffff")
+        self.style.configure("Brand.TLabel", background=UI_NAVY, foreground="#ffffff", font=("Helvetica", 13, "bold"))
         self.style.configure("Top.TCheckbutton", background=UI_NAVY, foreground="#ffffff")
         self.style.configure("TButton", padding=(12, 6), background=UI_SURFACE_MUTED, foreground=UI_TEXT, bordercolor=UI_BORDER, focusthickness=1, focuscolor=UI_NAVY)
         self.style.map("TButton", background=[("active", "#e2e8f0"), ("disabled", "#d1d5db")])
