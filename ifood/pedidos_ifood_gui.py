@@ -1173,6 +1173,8 @@ def _detect_extracted_root(extract_dir):
     entries = [os.path.join(extract_dir, name) for name in os.listdir(extract_dir)]
     dirs = [path for path in entries if os.path.isdir(path)]
     files = [path for path in entries if os.path.isfile(path)]
+    if len(dirs) == 1 and not files and os.path.basename(dirs[0]) == "ifood":
+        return extract_dir
     if len(dirs) == 1 and not files:
         return dirs[0]
     return extract_dir
