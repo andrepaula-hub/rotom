@@ -1195,7 +1195,7 @@ def _build_updater_script(staging_dir, extracted_root):
     relaunch = os.path.join(TARGET_APP_ROOT, "ifood", "pedidos_ifood_gui.py")
     relaunch_python = sys.executable or "python3"
     preserved = "\n".join(
-        f'  if [ -f "$PRESERVE_SOURCE/{rel}" ]; then cp "$PRESERVE_SOURCE/{rel}" "{staging_dir}/preserve/{rel}"; fi'
+        f'  if [ -f "$PRESERVE_SOURCE/{rel}" ]; then mkdir -p "{staging_dir}/preserve/{os.path.dirname(rel)}"; cp "$PRESERVE_SOURCE/{rel}" "{staging_dir}/preserve/{rel}"; fi'
         for rel in sorted(UPDATE_PRESERVE)
     )
     restore = "\n".join(
@@ -1204,6 +1204,9 @@ def _build_updater_script(staging_dir, extracted_root):
     )
     return f"""#!/bin/zsh
 set -e
+LOG="/tmp/rebootqr_update.log"
+exec >>"$LOG" 2>&1
+echo "update start $(date '+%d/%m/%Y %H:%M:%S')"
 sleep 2
 TARGET_ROOT="{TARGET_APP_ROOT}"
 PARENT_DIR="{INSTALL_BASE_DIR}"
