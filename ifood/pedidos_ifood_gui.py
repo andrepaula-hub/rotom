@@ -524,6 +524,8 @@ BORDER_THICKNESS_LABELS = {"fina": "Fina", "media": "Média", "grossa": "Grossa"
 DEFAULT_APP_CONFIG = {
     "raspberry_name": socket.gethostname() or "",
     "rotom_manifest_url": DEFAULT_ROTOM_MANIFEST_URL,
+    "rotom_auto_update": "1",
+    "rotom_update_check_seconds": "60",
     "zebra_rows": "1",  # 1=linhas alternadas coloridas
     "status_colors": "1",  # 1=colorir linhas por status
     "color_separation": "#bfdbfe",   # azul claro — SEPARATION
@@ -1029,6 +1031,7 @@ def _download_update_payload():
                 "zip_url": _normalize_download_url(zip_url),
                 "version": str(data.get("version") or "").strip(),
                 "sha256": str(data.get("sha256") or "").strip(),
+                "scheduled_at": str(data.get("scheduledAt") or data.get("scheduled_at") or "").strip(),
             }
 
     values = obter_dados_google_sheets(APP_CONFIG["spreadsheet_id"], UPDATE_LINK_RANGE)
@@ -1056,6 +1059,18 @@ def _download_update_payload():
         }
 
     raise RuntimeError("A aba LINK não possui nenhum valor preenchido na coluna zip_url.")
+
+
+def _parse_manifest_time(value):
+    value = str(value or "").strip()
+    if not value:
+        return None
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except Exception:
+        return None
 
 
 def _normalize_download_url(url):
@@ -1993,6 +2008,8 @@ class App(Tk):
         self.status_filter_var = StringVar(value="(todos)")
         self._sort_state      = {"col": None, "reverse": False}
         self._printing        = False
+        self._update_running  = False
+        self._last_update_check_error = 0.0
 
         # ── Notebook principal: abas Pedidos e Painel ──
         self.main_nb = ttk.Notebook(self)
@@ -2106,6 +2123,7 @@ class App(Tk):
         self.reload()
         self.after(50, self.tree.focus_set)
         self.after(1_000, self._auto_tick)
+        self.after(15_000, self._update_check_tick)
         self.after(1_000, self._panel_heartbeat)
         self._ui_queue = queue.Queue()
         self.after(100, self._process_ui_queue)
@@ -2145,6 +2163,41 @@ class App(Tk):
                 self.reload()
         finally:
             self.after(AUTO_REFRESH_MS, self._auto_tick)
+
+    def _update_check_interval_ms(self):
+        try:
+            seconds = int(APP_CONFIG.get("rotom_update_check_seconds", "60"))
+        except Exception:
+            seconds = 60
+        return max(30, min(seconds, 3600)) * 1000
+
+    def _update_check_tick(self):
+        try:
+            if APP_CONFIG.get("rotom_auto_update", "1") == "1" and not self._update_running:
+                threading.Thread(target=self._auto_update_check, daemon=True).start()
+        finally:
+            self.after(self._update_check_interval_ms(), self._update_check_tick)
+
+    def _auto_update_check(self):
+        try:
+            payload = _download_update_payload()
+            version = str(payload.get("version", "")).strip()
+            if not version or version == APP_VERSION:
+                return
+            if _is_legacy_semver(version) and not _is_legacy_semver(APP_VERSION):
+                return
+            scheduled_ts = _parse_manifest_time(payload.get("scheduled_at"))
+            if scheduled_ts and scheduled_ts > time.time():
+                self.after(0, lambda: self.status_lbl.config(
+                    text=f"Atualização {version} agendada para {datetime.fromtimestamp(scheduled_ts).strftime('%d/%m %H:%M')}"))
+                return
+            self.after(0, lambda: self.status_lbl.config(text=f"Atualização {version} liberada. Aplicando…"))
+            self._start_update_worker(manual=False)
+        except Exception as exc:
+            now = time.time()
+            if now - self._last_update_check_error > 300:
+                self._last_update_check_error = now
+                _log_error(f"Auto-update check: {exc}")
 
     def _on_toggle_auto(self):
         self.status_lbl.config(text="Auto ligado (1 min)" if self.auto_var.get() else "Auto desligado")
@@ -2494,7 +2547,12 @@ class App(Tk):
             parent=self,
         ):
             return
+        self._start_update_worker(manual=True)
 
+    def _start_update_worker(self, manual=False):
+        if getattr(self, "_update_running", False):
+            return
+        self._update_running = True
         def worker():
             try:
                 self.after(0, lambda: self.status_lbl.config(text="Consultando manifest da atualização…"))
@@ -2504,11 +2562,13 @@ class App(Tk):
                 version = str(payload.get("version", "")).strip()
 
                 if version and version == APP_VERSION:
-                    self.after(0, lambda: messagebox.showinfo("Atualização", f"Você já está na versão {APP_VERSION}.", parent=self))
+                    if manual:
+                        self.after(0, lambda: messagebox.showinfo("Atualização", f"Você já está na versão {APP_VERSION}.", parent=self))
                     self.after(0, lambda: self.status_lbl.config(text=f"Versão {APP_VERSION} já instalada"))
                     return
                 if version and _is_legacy_semver(version) and not _is_legacy_semver(APP_VERSION):
-                    self.after(0, lambda: messagebox.showinfo("Atualização", f"Manifest legado {version}; versão local {APP_VERSION} mantida.", parent=self))
+                    if manual:
+                        self.after(0, lambda: messagebox.showinfo("Atualização", f"Manifest legado {version}; versão local {APP_VERSION} mantida.", parent=self))
                     self.after(0, lambda: self.status_lbl.config(text=f"Versão {APP_VERSION} mantida"))
                     return
 
@@ -2538,7 +2598,12 @@ class App(Tk):
                 self.after(0, self.destroy)
             except Exception as exc:
                 self.after(0, lambda: self.status_lbl.config(text="Falha na atualização"))
-                self.after(0, lambda: messagebox.showerror("Erro na atualização", str(exc), parent=self))
+                if manual:
+                    self.after(0, lambda: messagebox.showerror("Erro na atualização", str(exc), parent=self))
+                else:
+                    _log_error(f"Auto-update: {exc}")
+            finally:
+                self._update_running = False
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -2612,6 +2677,8 @@ class App(Tk):
         sheet_fields = [
             ("Nome do Raspberry",     "raspberry_name"),
             ("Manifest Rotom",        "rotom_manifest_url"),
+            ("Auto-update Rotom",     "rotom_auto_update"),
+            ("Checar update a cada",  "rotom_update_check_seconds"),
             ("Loja / Planilha",       "spreadsheet_id"),
             ("Range",                 "range_name"),
             ("Tamanho da interface",  "ui_scale"),
@@ -2708,6 +2775,18 @@ class App(Tk):
                 var = BooleanVar(value=self._print_extra_enabled())
                 sheet_vars[key] = var
                 ttk.Checkbutton(tab_sheet, text="Imprimir etiqueta extra de coleta", variable=var).grid(row=row_pos, column=value_col, sticky="w", pady=4)
+            elif key == "rotom_auto_update":
+                var = BooleanVar(value=APP_CONFIG.get("rotom_auto_update", "1") == "1")
+                sheet_vars[key] = var
+                ttk.Checkbutton(tab_sheet, text="Aplicar update automaticamente no horário liberado pelo Alakazam", variable=var).grid(row=row_pos, column=value_col, sticky="w", pady=4)
+            elif key == "rotom_update_check_seconds":
+                var = StringVar(value=APP_CONFIG.get("rotom_update_check_seconds", "60"))
+                sheet_vars[key] = var
+                pfrm = ttk.Frame(tab_sheet)
+                pfrm.grid(row=row_pos, column=value_col, sticky="w", pady=4)
+                ttk.Spinbox(pfrm, textvariable=var, from_=30, to=3600,
+                            increment=30, width=6).pack(side=LEFT)
+                ttk.Label(pfrm, text=" segundos", foreground="#888").pack(side=LEFT)
             elif key == "print_mode":
                 PRINT_MODES = {
                     "padrao": "Padrão da impressora",
@@ -3090,6 +3169,13 @@ class App(Tk):
                             if not v.isdigit() or not (10 <= int(v) <= 600):
                                 messagebox.showwarning("Valor inválido",
                                     "Painel: o intervalo deve ser um número entre 10 e 600 segundos.",
+                                    parent=win)
+                                return
+                            updated[key] = v
+                        elif key == "rotom_update_check_seconds":
+                            if not v.isdigit() or not (30 <= int(v) <= 3600):
+                                messagebox.showwarning("Valor inválido",
+                                    "Rotom: o intervalo de update deve ser um número entre 30 e 3600 segundos.",
                                     parent=win)
                                 return
                             updated[key] = v
