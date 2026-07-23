@@ -21,3 +21,4 @@ O ZIP sai em `dist/rotom-<hash>.zip` e inclui:
 - `ifood/pedidos_ifood_gui.py`
 - `ifood/rotom_version.json`
 
+O hash do commit publicado é a versão exibida no app.
