@@ -66,6 +66,23 @@ APP_VERSION = _detect_app_version()
 
 def _is_legacy_semver(value):
     return bool(re.match(r"^\d+(?:\.\d+)+$", str(value or "").strip()))
+
+def _is_probable_commit(value):
+    return bool(re.match(r"^[0-9a-f]{7,40}$", str(value or "").strip().lower()))
+
+def _is_known_downgrade(target_version):
+    if not (_is_probable_commit(APP_VERSION) and _is_probable_commit(target_version)):
+        return False
+    try:
+        proc = subprocess.run(
+            ["git", "-C", APP_ROOT, "merge-base", "--is-ancestor", APP_VERSION, target_version],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        return proc.returncode == 1
+    except Exception:
+        return False
 UPDATE_PRESERVE = {
     "ifood/token.json",
     "ifood/client_secret.json",
@@ -1174,6 +1191,7 @@ def _prepare_extracted_root(staging_dir, extract_dir):
 
 def _build_updater_script(staging_dir, extracted_root):
     relaunch = os.path.join(TARGET_APP_ROOT, "ifood", "pedidos_ifood_gui.py")
+    relaunch_python = sys.executable or "python3"
     preserved = "\n".join(
         f'  if [ -f "$PRESERVE_SOURCE/{rel}" ]; then cp "$PRESERVE_SOURCE/{rel}" "{staging_dir}/preserve/{rel}"; fi'
         for rel in sorted(UPDATE_PRESERVE)
@@ -1207,7 +1225,7 @@ mv "{extracted_root}" "$TARGET_ROOT"
 {restore}
 echo "{{\"quando\": \"$(date '+%d/%m/%Y %H:%M:%S')\"}}" > "$TARGET_ROOT/ifood/update_marker.json"
 cd "$TARGET_ROOT"
-nohup python3 "{relaunch}" >/tmp/rebootqr_update.log 2>&1 &
+nohup "{relaunch_python}" "{relaunch}" >/tmp/rebootqr_update.log 2>&1 &
 """
 
 
@@ -2188,6 +2206,8 @@ class App(Tk):
                 return
             if _is_legacy_semver(version) and not _is_legacy_semver(APP_VERSION):
                 return
+            if _is_known_downgrade(version):
+                return
             scheduled_ts = _parse_manifest_time(payload.get("scheduled_at"))
             if scheduled_ts and scheduled_ts > time.time():
                 self.after(0, lambda: self.status_lbl.config(
@@ -2571,6 +2591,11 @@ class App(Tk):
                 if version and _is_legacy_semver(version) and not _is_legacy_semver(APP_VERSION):
                     if manual:
                         self.after(0, lambda: messagebox.showinfo("Atualização", f"Manifest legado {version}; versão local {APP_VERSION} mantida.", parent=self))
+                    self.after(0, lambda: self.status_lbl.config(text=f"Versão {APP_VERSION} mantida"))
+                    return
+                if version and _is_known_downgrade(version):
+                    if manual:
+                        self.after(0, lambda: messagebox.showinfo("Atualização", f"Manifest {version}; versão local {APP_VERSION} mantida.", parent=self))
                     self.after(0, lambda: self.status_lbl.config(text=f"Versão {APP_VERSION} mantida"))
                     return
 
