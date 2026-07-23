@@ -462,6 +462,15 @@ PRINTER_HOST    = ""
 PRINTER_PORT    = 9100
 FORCE_EPL_MODE  = False
 AUTO_REFRESH_MS = 60_000
+UI_BG = "#f5f7fb"
+UI_SURFACE = "#ffffff"
+UI_SURFACE_MUTED = "#eef2f7"
+UI_NAVY = "#0b376d"
+UI_NAVY_DARK = "#06264d"
+UI_GREEN = "#00a651"
+UI_TEXT = "#111827"
+UI_MUTED = "#64748b"
+UI_BORDER = "#dbe3ee"
 # ================================
 
 CONFIG_PATH = os.path.join(BASE_DIR, "pedidos_ifood_gui_config.json")
@@ -1971,7 +1980,9 @@ class App(Tk):
         super().__init__()
         self.title(f"Rotom • Pedidos iFood — {APP_VERSION}")
         self.geometry("1340x740")
+        self.configure(bg=UI_BG)
         self.style = ttk.Style(self)
+        self._apply_theme()
         self.tree_font = None
         self.tree_heading_font = None
         self._apply_ui_scale()
@@ -1989,30 +2000,30 @@ class App(Tk):
         self.main_nb.add(self.tab_pedidos, text="  Pedidos  ")
 
         # ── Top bar (dentro da aba Pedidos) ──
-        top = ttk.Frame(self.tab_pedidos, padding=8)
+        top = ttk.Frame(self.tab_pedidos, padding=10, style="Top.TFrame")
         top.pack(fill=X)
-        ttk.Button(top, text="Atualizar",     command=self.reload).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(top, text="Atualizar",     command=self.reload, style="Primary.TButton").pack(side=LEFT, padx=(0, 6))
         ttk.Button(top, text="Configurações", command=self.open_settings).pack(side=LEFT, padx=(0, 6))
         self.auto_var = BooleanVar(value=True)
-        ttk.Checkbutton(top, text="Auto", variable=self.auto_var,
+        ttk.Checkbutton(top, text="Auto", variable=self.auto_var, style="Top.TCheckbutton",
                         command=self._on_toggle_auto).pack(side=LEFT)
-        ttk.Label(top, text="Loja:").pack(side=LEFT, padx=(10, 4))
+        ttk.Label(top, text="Loja:", style="Top.TLabel").pack(side=LEFT, padx=(10, 4))
         self.dark_var = StringVar(value=self._initial_dark_name())
         self.dark_cb = ttk.Combobox(top, textvariable=self.dark_var,
                                     values=list(DARK_STORES.keys()) + [DARK_OUTRA],
                                     state="readonly", width=14)
         self.dark_cb.pack(side=LEFT)
         self.dark_cb.bind("<<ComboboxSelected>>", self._on_dark_selected)
-        ttk.Label(top, text="Buscar:").pack(side=LEFT, padx=(14, 4))
+        ttk.Label(top, text="Buscar:", style="Top.TLabel").pack(side=LEFT, padx=(14, 4))
         self.search_entry = ttk.Entry(top, textvariable=self.search_var, width=13)
         self.search_entry.pack(side=LEFT)
         ttk.Button(top, text="Limpar",       command=self.clear_search).pack(side=LEFT, padx=(4, 0))
-        ttk.Label(top, text="Status:").pack(side=LEFT, padx=(10, 4))
+        ttk.Label(top, text="Status:", style="Top.TLabel").pack(side=LEFT, padx=(10, 4))
         self.status_filter_cb = ttk.Combobox(top, textvariable=self.status_filter_var,
                                              values=["(todos)"], state="readonly", width=12)
         self.status_filter_cb.pack(side=LEFT)
         self.status_filter_var.trace_add("write", self._on_search_change)
-        ttk.Button(top, text="Imprimir selecionado", command=self.print_selected).pack(side=LEFT, padx=(12, 0))
+        ttk.Button(top, text="Imprimir selecionado", command=self.print_selected, style="Primary.TButton").pack(side=LEFT, padx=(12, 0))
         self.search_var.trace_add("write", self._on_search_change)
 
         # ── Barra de status (inferior) ──
@@ -2100,6 +2111,31 @@ class App(Tk):
         self.after(100, self._process_ui_queue)
         # monitor da impressora desativado (indicador saiu da barra de status)
         # self.after(500, self._start_printer_monitor)
+
+    def _apply_theme(self):
+        try:
+            self.style.theme_use("clam")
+        except Exception:
+            pass
+        self.style.configure(".", background=UI_BG, foreground=UI_TEXT, font=("Helvetica", 10))
+        self.style.configure("TFrame", background=UI_BG)
+        self.style.configure("TLabel", background=UI_BG, foreground=UI_TEXT)
+        self.style.configure("Top.TFrame", background=UI_NAVY, relief="flat")
+        self.style.configure("Top.TLabel", background=UI_NAVY, foreground="#ffffff")
+        self.style.configure("Top.TCheckbutton", background=UI_NAVY, foreground="#ffffff")
+        self.style.configure("TButton", padding=(12, 6), background=UI_SURFACE_MUTED, foreground=UI_TEXT, bordercolor=UI_BORDER, focusthickness=1, focuscolor=UI_NAVY)
+        self.style.map("TButton", background=[("active", "#e2e8f0"), ("disabled", "#d1d5db")])
+        self.style.configure("Primary.TButton", background=UI_NAVY, foreground="#ffffff", bordercolor=UI_NAVY_DARK)
+        self.style.map("Primary.TButton", background=[("active", UI_NAVY_DARK), ("disabled", "#9ca3af")], foreground=[("disabled", "#f8fafc")])
+        self.style.configure("TCheckbutton", background=UI_BG, foreground=UI_TEXT)
+        self.style.configure("TCombobox", fieldbackground=UI_SURFACE, background=UI_SURFACE, foreground=UI_TEXT, arrowcolor=UI_NAVY)
+        self.style.configure("TEntry", fieldbackground=UI_SURFACE, foreground=UI_TEXT)
+        self.style.configure("TNotebook", background=UI_BG, borderwidth=0)
+        self.style.configure("TNotebook.Tab", padding=(18, 8), background=UI_SURFACE_MUTED, foreground=UI_MUTED)
+        self.style.map("TNotebook.Tab", background=[("selected", UI_NAVY)], foreground=[("selected", "#ffffff")])
+        self.style.configure("Treeview", background=UI_SURFACE, fieldbackground=UI_SURFACE, foreground=UI_TEXT, bordercolor=UI_BORDER, rowheight=28)
+        self.style.configure("Treeview.Heading", background=UI_NAVY, foreground="#ffffff", relief="flat", font=("Helvetica", 10, "bold"))
+        self.style.map("Treeview.Heading", background=[("active", UI_NAVY_DARK)])
 
     # ── auto-refresh ──
     def _auto_tick(self):
