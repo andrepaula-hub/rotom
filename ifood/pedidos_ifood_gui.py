@@ -63,6 +63,7 @@ def _detect_app_version():
     return "local"
 
 APP_VERSION = _detect_app_version()
+LAST_ORDERS_SYNC_AT = ""
 
 def _is_legacy_semver(value):
     return bool(re.match(r"^\d+(?:\.\d+)+$", str(value or "").strip()))
@@ -1039,6 +1040,8 @@ def _download_update_payload():
             "deviceName": APP_CONFIG.get("raspberry_name", ""),
             "currentVersion": APP_VERSION,
         }
+        if LAST_ORDERS_SYNC_AT:
+            query["lastOrdersSyncAt"] = LAST_ORDERS_SYNC_AT
         sep = "&" if "?" in manifest_url else "?"
         url = manifest_url + sep + urllib.parse.urlencode(query)
         data = json.loads(_read_url_bytes(url, timeout=20).decode("utf-8"))
@@ -2413,11 +2416,13 @@ class App(Tk):
         ) if total else "0 pedidos")
 
     def reload(self):
+        global LAST_ORDERS_SYNC_AT
         if self._is_reloading: return
         self._is_reloading = True
         self.status_lbl.config(text="Atualizando…")
         try:
             values = obter_dados_google_sheets(APP_CONFIG["spreadsheet_id"], APP_CONFIG["range_name"])
+            LAST_ORDERS_SYNC_AT = datetime.now().isoformat()
             self._all_pedidos = parse_pedidos(values)
             apoio_map = obter_mapa_apoio_busca(APP_CONFIG["spreadsheet_id"])
             apoio_diag = aplicar_apoio_busca_aos_pedidos(self._all_pedidos, apoio_map)
