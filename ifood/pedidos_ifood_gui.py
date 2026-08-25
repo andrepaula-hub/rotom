@@ -12,7 +12,7 @@ import time
 import urllib.parse
 import urllib.request
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import Tk, BOTH, RIGHT, LEFT, Y, X, YES, messagebox, simpledialog, ttk, BooleanVar, StringVar, IntVar
@@ -163,6 +163,7 @@ def obter_dados_google_sheets(spreadsheet_id, range_name):
 
 HISTORY_SHEET_NAME = "Histórico de Impressão"
 HISTORY_HEADER = ["codigo_shopper", "data_hora", "quantidade_etiquetas", "volumes"]
+HISTORY_RETENTION_DAYS = 2
 APOIO_BUSCA_SHEET_NAME = "Apoio Busca"
 APOIO_BUSCA_HEADER_CODIGO = "codigo_pedido_shopper"
 APOIO_BUSCA_HEADER_OPERADOR = "OPERADOR"
@@ -265,6 +266,43 @@ def registrar_historico_impressao(spreadsheet_id, codigo, etiquetas, volumes):
             insertDataOption="INSERT_ROWS",
             body={"values": [[str(codigo), stamp, str(int(etiquetas)), str(volumes)]]},
         ).execute()
+
+def limpar_historico_impressao(spreadsheet_id, agora=None):
+    """Mantém só os últimos dois dias do histórico operacional."""
+    service = _get_sheets_service()
+    rows = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id, range=f"'{HISTORY_SHEET_NAME}'!A:D").execute().get("values", [])
+    if len(rows) <= 1:
+        return 0
+
+    agora = agora or datetime.now()
+    corte = agora - timedelta(days=HISTORY_RETENTION_DAYS)
+    recentes = [row[:4] for row in rows[1:] if len(row) < 2 or not str(row[1]).strip()]
+    for row in rows[1:]:
+        if len(row) < 2 or not str(row[1]).strip():
+            continue
+        try:
+            data = datetime.strptime(str(row[1]).strip(), "%d/%m/%Y %H:%M:%S")
+        except ValueError:
+            recentes.append(row[:4])
+            continue
+        if data >= corte:
+            recentes.append(row[:4])
+
+    removidas = len(rows) - 1 - len(recentes)
+    if removidas <= 0:
+        return 0
+
+    service.spreadsheets().values().clear(
+        spreadsheetId=spreadsheet_id, range=f"'{HISTORY_SHEET_NAME}'!A2:D", body={}).execute()
+    if recentes:
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{HISTORY_SHEET_NAME}'!A2:D{len(recentes) + 1}",
+            valueInputOption="RAW",
+            body={"values": recentes},
+        ).execute()
+    return removidas
 
 def _norm_status(s):
     """Compara status tolerando caixa, espaços e underscores:
@@ -2036,6 +2074,7 @@ class App(Tk):
         self._printing        = False
         self._update_running  = False
         self._last_update_check_error = 0.0
+        self._last_history_cleanup_date = None
 
         # ── Notebook principal: abas Pedidos e Painel ──
         self.main_nb = ttk.Notebook(self)
@@ -2434,6 +2473,16 @@ class App(Tk):
                 )
             )
             self._update_status_filter_options()
+            if APP_CONFIG.get("history_enabled", "1") == "1":
+                hoje = datetime.now().date()
+                if self._last_history_cleanup_date != hoje:
+                    try:
+                        removidas = limpar_historico_impressao(APP_CONFIG["spreadsheet_id"])
+                        _safe_log(f"[HISTÓRICO] limpeza concluída: {removidas} linhas removidas")
+                    except Exception as e:
+                        _log_error(f"Limpeza do Histórico de Impressão falhou: {e}")
+                    finally:
+                        self._last_history_cleanup_date = hoje
             hist = (ler_codigos_ja_impressos(APP_CONFIG["spreadsheet_id"])
                     if APP_CONFIG.get("history_enabled", "1") == "1" else set())
             self._printed_codes = hist | getattr(self, "_session_printed", set())
