@@ -12,6 +12,7 @@ import time
 import urllib.parse
 import urllib.request
 import zipfile
+import zlib
 from datetime import datetime, timedelta
 import tkinter as tk
 import tkinter.font as tkfont
@@ -160,10 +161,23 @@ def obter_dados_google_sheets(spreadsheet_id, range_name):
     _safe_log(f"[SHEETS] {len(values)} linhas recebidas")
     return values
 
+def obter_dados_google_sheets_lote(spreadsheet_id, range_names):
+    """Lê várias abas da mesma planilha em uma única requisição da API."""
+    _safe_log(f"[SHEETS] Carregando lote: {spreadsheet_id} - {len(range_names)} abas")
+    creds = _get_google_credentials(SHEETS_SCOPES)
+    service = build('sheets', 'v4', credentials=creds)
+    result = service.spreadsheets().values().batchGet(
+        spreadsheetId=spreadsheet_id, ranges=range_names).execute()
+    values_by_range = [item.get('values', []) for item in result.get('valueRanges', [])]
+    values_by_range.extend([[]] * (len(range_names) - len(values_by_range)))
+    _safe_log("[SHEETS] Lote recebido: " + ", ".join(str(len(values)) for values in values_by_range))
+    return values_by_range
+
 
 HISTORY_SHEET_NAME = "Histórico de Impressão"
 HISTORY_HEADER = ["codigo_shopper", "data_hora", "quantidade_etiquetas", "volumes"]
 HISTORY_RETENTION_DAYS = 2
+HISTORY_CLEANUP_MAX_DELAY_SECONDS = 30 * 60
 APOIO_BUSCA_SHEET_NAME = "Apoio Busca"
 APOIO_BUSCA_HEADER_CODIGO = "codigo_pedido_shopper"
 APOIO_BUSCA_HEADER_OPERADOR = "OPERADOR"
@@ -172,6 +186,9 @@ APOIO_BUSCA_HEADER_CRACHA = "CRACHA"
 def _get_sheets_service():
     creds = _get_google_credentials(SHEETS_SCOPES)
     return build('sheets', 'v4', credentials=creds)
+
+def atraso_limpeza_historico(spreadsheet_id):
+    return 120 + (zlib.crc32(str(spreadsheet_id).encode("utf-8")) % HISTORY_CLEANUP_MAX_DELAY_SECONDS)
 
 def _friendly_sheets_error(exc):
     """Traduz erros comuns da API Sheets em orientação prática."""
@@ -267,11 +284,12 @@ def registrar_historico_impressao(spreadsheet_id, codigo, etiquetas, volumes):
             body={"values": [[str(codigo), stamp, str(int(etiquetas)), str(volumes)]]},
         ).execute()
 
-def limpar_historico_impressao(spreadsheet_id, agora=None):
+def limpar_historico_impressao(spreadsheet_id, agora=None, rows=None):
     """Mantém só os últimos dois dias do histórico operacional."""
     service = _get_sheets_service()
-    rows = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range=f"'{HISTORY_SHEET_NAME}'!A:D").execute().get("values", [])
+    if rows is None:
+        rows = service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id, range=f"'{HISTORY_SHEET_NAME}'!A:D").execute().get("values", [])
     if len(rows) <= 1:
         return 0
 
@@ -313,13 +331,14 @@ def _norm_status(s):
 def _parse_status_list(csv_text):
     return {_norm_status(x) for x in (csv_text or "").split(",") if x.strip()}
 
-def ler_historico_volumes(spreadsheet_id):
+def ler_historico_volumes(spreadsheet_id, rows=None):
     """Mapa codigo_shopper -> volumes (última impressão), da aba Histórico."""
     try:
-        service = _get_sheets_service()
-        rows = service.spreadsheets().values().get(
-            spreadsheetId=spreadsheet_id,
-            range=f"'{HISTORY_SHEET_NAME}'!A:D").execute().get("values", [])
+        if rows is None:
+            service = _get_sheets_service()
+            rows = service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=f"'{HISTORY_SHEET_NAME}'!A:D").execute().get("values", [])
         mapa = {}
         for r in rows[1:]:
             if r and str(r[0]).strip():
@@ -365,13 +384,14 @@ def registrar_atualizacao_na_link(spreadsheet_id):
         body={"values": [["", APP_VERSION, "", quando, maquina]]},
     ).execute()
 
-def ler_codigos_ja_impressos(spreadsheet_id):
+def ler_codigos_ja_impressos(spreadsheet_id, rows=None):
     """Conjunto de códigos com registro no histórico (indicador 'já impresso')."""
     try:
-        service = _get_sheets_service()
-        rows = service.spreadsheets().values().get(
-            spreadsheetId=spreadsheet_id,
-            range=f"'{HISTORY_SHEET_NAME}'!A:A").execute().get("values", [])
+        if rows is None:
+            service = _get_sheets_service()
+            rows = service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=f"'{HISTORY_SHEET_NAME}'!A:A").execute().get("values", [])
         return {str(r[0]).strip() for r in rows[1:] if r and str(r[0]).strip()}
     except Exception:
         return set()   # aba ainda não existe ou sem acesso: sem indicador
@@ -380,18 +400,13 @@ def _norm_operador(nome):
     """Chave de comparação de operador: sem espaços duplicados, maiúsculas."""
     return sanitize_code_exact(nome).upper()
 
-def obter_mapa_apoio_busca(spreadsheet_id):
+def obter_mapa_apoio_busca_valores(values):
     """Lê a aba oculta de apoio e devolve DOIS mapas:
     - 'por_codigo':   codigo do pedido -> {operador, cracha}
     - 'por_operador': operador (normalizado) -> cracha
     O mapa por operador é o que garante a busca por crachá mesmo quando a
     aba estiver defasada em relação à dash (códigos antigos)."""
     vazio = {"por_codigo": {}, "por_operador": {}}
-    try:
-        values = obter_dados_google_sheets(spreadsheet_id, f"'{APOIO_BUSCA_SHEET_NAME}'!A:C")
-    except Exception as e:
-        _safe_log(f"[APOIO BUSCA] Falha ao ler aba oculta: {e}")
-        return vazio
     if not values:
         return vazio
     header = values[0]
@@ -415,6 +430,14 @@ def obter_mapa_apoio_busca(spreadsheet_id):
     _safe_log(f"[APOIO BUSCA] {len(por_codigo)} códigos e "
               f"{len(por_operador)} operadores/crachás carregados")
     return {"por_codigo": por_codigo, "por_operador": por_operador}
+
+def obter_mapa_apoio_busca(spreadsheet_id):
+    try:
+        values = obter_dados_google_sheets(spreadsheet_id, f"'{APOIO_BUSCA_SHEET_NAME}'!A:C")
+    except Exception as e:
+        _safe_log(f"[APOIO BUSCA] Falha ao ler aba oculta: {e}")
+        return {"por_codigo": {}, "por_operador": {}}
+    return obter_mapa_apoio_busca_valores(values)
 
 def aplicar_apoio_busca_aos_pedidos(pedidos, apoio_map):
     """Anexa o crachá (só em memória) e preenche operador quando vier vazio.
@@ -2075,6 +2098,7 @@ class App(Tk):
         self._update_running  = False
         self._last_update_check_error = 0.0
         self._last_history_cleanup_date = None
+        self._history_cleanup_after = time.time() + atraso_limpeza_historico(APP_CONFIG["spreadsheet_id"])
 
         # ── Notebook principal: abas Pedidos e Painel ──
         self.main_nb = ttk.Notebook(self)
@@ -2460,10 +2484,15 @@ class App(Tk):
         self._is_reloading = True
         self.status_lbl.config(text="Atualizando…")
         try:
-            values = obter_dados_google_sheets(APP_CONFIG["spreadsheet_id"], APP_CONFIG["range_name"])
+            values, apoio_values, history_rows = obter_dados_google_sheets_lote(
+                APP_CONFIG["spreadsheet_id"], [
+                    APP_CONFIG["range_name"],
+                    f"'{APOIO_BUSCA_SHEET_NAME}'!A:C",
+                    f"'{HISTORY_SHEET_NAME}'!A:D",
+                ])
             LAST_ORDERS_SYNC_AT = datetime.now().isoformat()
             self._all_pedidos = parse_pedidos(values)
-            apoio_map = obter_mapa_apoio_busca(APP_CONFIG["spreadsheet_id"])
+            apoio_map = obter_mapa_apoio_busca_valores(apoio_values)
             apoio_diag = aplicar_apoio_busca_aos_pedidos(self._all_pedidos, apoio_map)
             _safe_log(
                 "[APOIO BUSCA] matches=%s crachas=%s operadores_preenchidos=%s" % (
@@ -2475,19 +2504,19 @@ class App(Tk):
             self._update_status_filter_options()
             if APP_CONFIG.get("history_enabled", "1") == "1":
                 hoje = datetime.now().date()
-                if self._last_history_cleanup_date != hoje:
+                if self._last_history_cleanup_date != hoje and time.time() >= self._history_cleanup_after:
                     try:
-                        removidas = limpar_historico_impressao(APP_CONFIG["spreadsheet_id"])
+                        removidas = limpar_historico_impressao(APP_CONFIG["spreadsheet_id"], rows=history_rows)
                         _safe_log(f"[HISTÓRICO] limpeza concluída: {removidas} linhas removidas")
+                        self._last_history_cleanup_date = hoje
                     except Exception as e:
                         _log_error(f"Limpeza do Histórico de Impressão falhou: {e}")
-                    finally:
-                        self._last_history_cleanup_date = hoje
-            hist = (ler_codigos_ja_impressos(APP_CONFIG["spreadsheet_id"])
+                        self._history_cleanup_after = time.time() + 5 * 60
+            hist = (ler_codigos_ja_impressos(APP_CONFIG["spreadsheet_id"], rows=history_rows)
                     if APP_CONFIG.get("history_enabled", "1") == "1" else set())
             self._printed_codes = hist | getattr(self, "_session_printed", set())
             if self._panel_active():
-                self._history_volumes = ler_historico_volumes(APP_CONFIG["spreadsheet_id"])
+                self._history_volumes = ler_historico_volumes(APP_CONFIG["spreadsheet_id"], rows=history_rows)
         except Exception as e:
             _log_error(f"Erro ao ler planilha: {e}")
             messagebox.showerror("Erro ao ler planilha", str(e))
@@ -3688,9 +3717,10 @@ class App(Tk):
 
         def worker():
             try:
-                values = obter_dados_google_sheets(sid, rng)
+                values, history_rows = obter_dados_google_sheets_lote(
+                    sid, [rng, f"'{HISTORY_SHEET_NAME}'!A:D"])
                 pedidos = parse_pedidos(values)
-                volumes = ler_historico_volumes(sid)
+                volumes = ler_historico_volumes(sid, rows=history_rows)
                 def apply():
                     self._all_pedidos = pedidos
                     self._history_volumes = volumes
