@@ -11,6 +11,7 @@ ja usa em pedidos_ifood_gui.py pro fluxo EPL. Roda dentro do Rotom (nao como
 processo avulso) pra ganhar o auto-update que o Rotom ja tem — ver D-187 no
 repo do Alakazam.
 """
+import re
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -20,13 +21,34 @@ ALLOWED_ORIGINS = {
     "https://darkstores-264e6.web.app",
     "https://darkstores-264e6.firebaseapp.com",
 }
+# Canais de preview do Hosting (`firebase hosting:channel:deploy`) ganham um
+# subdominio proprio por canal, com um hash que muda se o canal expirar e for
+# recriado (ex: darkstores-264e6--staging-hpjmn7nk.web.app). Prototipo do
+# Separador so existe nesses canais (nunca no link oficial, ver
+# docs/modulos/separador.md do Alakazam) — sem isso na allowlist, o
+# navegador bloqueia a resposta daqui e a impressao nao sai, mesmo com
+# /api/etiquetas/gerar respondendo 200 (achado real 2026-09-02, Raspberry de
+# Setor Bueno: back confirmou 200, quem barrou foi o CORS aqui).
+ORIGEM_PREVIEW_RE = re.compile(r"^https://darkstores-264e6--[a-z0-9-]+\.web\.app$")
+
+
+def _origem_permitida(origin: str) -> bool:
+    return origin in ALLOWED_ORIGINS or bool(ORIGEM_PREVIEW_RE.match(origin))
 
 
 class _Handler(BaseHTTPRequestHandler):
     def _cors(self):
         origin = self.headers.get("Origin", "")
-        if origin in ALLOWED_ORIGINS:
+        if _origem_permitida(origin):
             self.send_header("Access-Control-Allow-Origin", origin)
+            # Private Network Access (Chrome): pagina publica (https) pedindo
+            # recurso de rede privada (localhost) exige esse header no
+            # preflight, sem CORS normal nao bastar. Sem ele o Chrome recusa
+            # a chamada pra localhost:9876 de qualquer origem, oficial ou
+            # preview — nao so nao devolve resposta, nem chega a mandar o
+            # POST de verdade.
+            if self.headers.get("Access-Control-Request-Private-Network") == "true":
+                self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
