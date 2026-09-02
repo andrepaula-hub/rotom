@@ -1,0 +1,13 @@
+[Unit]
+Description=Rotom lite (print_bridge pro Alakazam)
+After=network.target cups.service
+
+[Service]
+ExecStart=/usr/bin/python3 /home/pi/rotom/ifood/rotom_lite.py
+WorkingDirectory=/home/pi/rotom/ifood
+Restart=always
+RestartSec=5
+Environment=ROTOM_DEVICE_NAME=%H
+
+[Install]
+WantedBy=multi-user.target
