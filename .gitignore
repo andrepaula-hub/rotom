@@ -3,6 +3,6 @@ ifood/client_secret.json
 ifood/pedidos_ifood_gui_config.json
 ifood/app_error.log
 ifood/__pycache__/
+ifood/rotom_version.json
 dist/
-.venv/
-
+.DS_Store
