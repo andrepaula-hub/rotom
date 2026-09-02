@@ -13,6 +13,8 @@ import urllib.parse
 import urllib.request
 import zipfile
 import zlib
+
+import print_bridge
 from datetime import datetime, timedelta
 import tkinter as tk
 import tkinter.font as tkfont
@@ -2099,6 +2101,10 @@ class App(Tk):
         self._last_update_check_error = 0.0
         self._last_history_cleanup_date = None
         self._history_cleanup_after = time.time() + atraso_limpeza_historico(APP_CONFIG["spreadsheet_id"])
+        try:
+            print_bridge.start()
+        except OSError as exc:
+            _log_error(f"print_bridge nao subiu (porta {print_bridge.PORT} ja em uso?): {exc}")
 
         # ── Notebook principal: abas Pedidos e Painel ──
         self.main_nb = ttk.Notebook(self)
