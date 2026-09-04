@@ -15,6 +15,7 @@ scripts/rotom-lite.service.
 import hashlib
 import json
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -28,6 +29,24 @@ MANIFEST_URL = "https://alakazam-backend-723462849448.us-east4.run.app/internal/
 CHECK_INTERVAL_SECONDS = 300
 VERSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rotom_version.json")
 DEVICE_NAME = os.environ.get("ROTOM_DEVICE_NAME", "")
+
+
+def _serial():
+    """Serial da CPU, único de fábrica em todo Raspberry Pi — ao contrário do
+    hostname (%H no systemd), que vem "raspberrypi" por padrão em qualquer Pi
+    zerado e faz dois devices colidirem no mesmo id no Alakazam. Fallback pro
+    hostname só serve pra rodar fora de um Pi de verdade (dev, teste)."""
+    try:
+        with open("/proc/cpuinfo", "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("Serial"):
+                    return line.split(":")[1].strip()
+    except Exception:
+        pass
+    return socket.gethostname()
+
+
+DEVICE_SERIAL = _serial()
 
 # Arquivos que este processo mantem atualizados — o ZIP publicado carrega
 # tambem pedidos_ifood_gui.py (o app completo usa o mesmo ZIP), mas o lite
@@ -48,7 +67,7 @@ def _versao_atual():
 
 
 def _consultar_manifest(versao_atual):
-    query = {"deviceName": DEVICE_NAME, "currentVersion": versao_atual}
+    query = {"deviceName": DEVICE_NAME, "serial": DEVICE_SERIAL, "currentVersion": versao_atual}
     url = MANIFEST_URL + "?" + urllib.parse.urlencode(query)
     with urllib.request.urlopen(url, timeout=20) as resp:
         return json.loads(resp.read().decode("utf-8"))
